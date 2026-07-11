@@ -58,6 +58,13 @@
   nav.tabs button.active { background: var(--accent); color: #fff; box-shadow: 0 2px 10px rgba(0,113,227,.3); }
   nav.tabs .ico { font-size: 1.02rem; line-height: 1; }
 
+  /* --- Topic picker: 3 quick chips + a grouped dropdown, instead of 36 chips --- */
+  .pickbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 16px; }
+  .pickbar .chips { margin: 0; flex: 0 0 auto; }
+  .pickbar select { flex: 1 1 170px; min-width: 0; margin: 0; }
+  .chip:disabled { opacity: .4; cursor: default; }
+  .chip:disabled:hover { color: var(--muted); border-color: var(--border); }
+
   /* --- Practice hub --- */
   .hub { display: grid; grid-template-columns: repeat(auto-fit, minmax(228px, 1fr)); gap: 12px; }
   .hub-card {
@@ -424,7 +431,10 @@
 
   <!-- FLASHCARDS -->
   <section id="flash" class="view">
-    <div class="chips" id="flashChips"></div>
+    <div class="pickbar">
+      <div class="chips" id="flashChips"></div>
+      <select class="styled" id="flashCatSel" aria-label="Pick a topic"></select>
+    </div>
     <p style="text-align:center;margin:-8px 0 14px"><button class="chip" id="awToggle">＋ Add my own word</button></p>
     <div class="addword" id="awPanel">
       <div class="aw-row">
@@ -467,7 +477,10 @@
 
   <!-- QUIZ -->
   <section id="quiz" class="view">
-    <div class="chips" id="quizChips"></div>
+    <div class="pickbar">
+      <div class="chips" id="quizChips"></div>
+      <select class="styled" id="quizCatSel" aria-label="Pick a topic"></select>
+    </div>
     <div class="panel">
       <div class="scorebar">
         <span>Question <b id="qNum">1</b></span>
@@ -2164,7 +2177,8 @@ function showView(id){
   if (id === "tutor") renderTutor();
   if (id === "core8") { buildC8Chips(); showC8Panel(); }
   if (id === "mastery") { buildMBatchSelect(); if (mMode === "learn") renderMLearn(); }
-  if (id === "flash") showCard();
+  if (id === "flash") { buildFlashChips(); showCard(); }   // refresh the "Due" count on entry
+  if (id === "quiz") buildQuizChips();
   // undo applies to the current review session only: leaving Flashcards drops the
   // stack so a stale snapshot can't clobber lesson write-backs to the same word
   if (id !== "flash" && typeof flashHistory !== "undefined") {
@@ -2183,20 +2197,92 @@ let flashDeck = [];
 let flashIdx = 0;
 let flashHistory = [];  // stack of {es, before} snapshots so a rating can be undone
 
-function buildFlashChips() {
-  const wrap = $("#flashChips");
-  wrap.innerHTML = "";
-  ["All", ...CATEGORIES].forEach(cat => {
-    const c = document.createElement("button");
-    c.className = "chip" + (cat===flashCat ? " active" : "");
-    c.textContent = cat;
-    c.onclick = () => { flashCat = cat; buildFlashChips(); buildDeck(); };
-    wrap.appendChild(c);
-  });
+/* ---- Topic picker (shared by Flashcards and Quiz) ----
+   1,273 words across 35 categories meant 36 chips in each tab — a wall of buttons that buried
+   the actual card, especially on the phone. A 36-way choice belongs in a dropdown, not a chip
+   row. What's left as chips are the three you actually reach for every session — and "Due" is
+   the one that matters, because with 1,273 words "All" just shuffles the whole pile, while
+   spaced repetition already knows what you should be seeing today. */
+const CAT_GROUPS = [
+  ["Everyday essentials", ["Greetings", "Phrases", "Questions", "Useful", "Numbers", "Colors", "Time"]],
+  ["Food & drink",        ["Food", "Drinks", "Cooking", "Restaurant"]],
+  ["Out & about",         ["Travel", "Transport", "Directions", "Places", "Shopping", "Money"]],
+  ["People & health",     ["People", "Family", "Feelings", "Body", "Health"]],
+  ["Home, work & study",  ["Home", "Clothing", "Work", "School", "Technology"]],
+  ["Nature & leisure",    ["Nature", "Animals", "Weather", "Sports", "Celebrations"]],
+  ["Words & grammar",     ["Adjectives", "Adverbs", "Verbs"]],
+];
+const QUICK_CATS = ["All", "Due", "My words"];
+const dueVocab = () => VOCAB.filter(v => state.cards[v.es] && isDue(state.cards[v.es]));
+const catSize = cat => VOCAB.filter(v => v.cat === cat).length;
+function vocabPool(cat) {
+  if (cat === "Due") { const d = dueVocab(); return d.length ? d : VOCAB; }
+  if (cat === "My words") return VOCAB.filter(v => v.custom);
+  if (!cat || cat === "All") return VOCAB;
+  const p = VOCAB.filter(v => v.cat === cat);
+  return p.length ? p : VOCAB;      // a category that vanished (e.g. after a reset) can't strand you
 }
+function buildPicker(kind) {
+  const isFlash = kind === "flash";
+  const cur = isFlash ? flashCat : quizCat;
+  const chipWrap = $(isFlash ? "#flashChips" : "#quizChips");
+  const sel = $(isFlash ? "#flashCatSel" : "#quizCatSel");
+  const setCat = c => {
+    if (isFlash) { flashCat = c; buildPicker("flash"); buildDeck(); }
+    else { quizCat = c; buildPicker("quiz"); nextQuestion(); }
+  };
+
+  const due = dueVocab().length;
+  const quick = [["All", `All ${VOCAB.length}`], ["Due", `⏰ Due ${due}`]];
+  if (CATEGORIES.includes("My words")) quick.push(["My words", "✍️ Mine"]);
+  chipWrap.innerHTML = "";
+  quick.forEach(([val, label]) => {
+    const b = document.createElement("button");
+    b.className = "chip" + (cur === val ? " active" : "");
+    b.textContent = label;
+    if (val === "Due" && due === 0) { b.disabled = true; b.title = "Nothing is due yet — study some cards first"; }
+    b.onclick = () => setCat(val);
+    chipWrap.appendChild(b);
+  });
+
+  sel.innerHTML = "";
+  const head = document.createElement("option");
+  head.value = "";
+  head.textContent = QUICK_CATS.includes(cur) ? "Or pick a topic…" : cur;
+  sel.appendChild(head);
+  const grouped = new Set();
+  CAT_GROUPS.forEach(([label, cats]) => {
+    const og = document.createElement("optgroup");
+    og.label = label;
+    cats.filter(c => CATEGORIES.includes(c)).forEach(c => {
+      grouped.add(c);
+      const o = document.createElement("option");
+      o.value = c;
+      o.textContent = `${c} (${catSize(c)})`;
+      og.appendChild(o);
+    });
+    if (og.children.length) sel.appendChild(og);
+  });
+  // anything I haven't filed into a group still has to be reachable
+  const ungrouped = CATEGORIES.filter(c => !grouped.has(c) && c !== "My words");
+  if (ungrouped.length) {
+    const og = document.createElement("optgroup");
+    og.label = "Other";
+    ungrouped.forEach(c => {
+      const o = document.createElement("option");
+      o.value = c;
+      o.textContent = `${c} (${catSize(c)})`;
+      og.appendChild(o);
+    });
+    sel.appendChild(og);
+  }
+  sel.value = QUICK_CATS.includes(cur) ? "" : cur;
+  sel.onchange = () => { if (sel.value) setCat(sel.value); };
+}
+function buildFlashChips() { buildPicker("flash"); }
 // Spaced repetition: sort by lowest box (least known) first, with some shuffle.
 function buildDeck() {
-  let pool = flashCat==="All" ? VOCAB : VOCAB.filter(v=>v.cat===flashCat);
+  let pool = vocabPool(flashCat);
   pool = shuffle(pool).sort((a,b)=>(state.cards[a.es]?.box||1)-(state.cards[b.es]?.box||1));
   flashDeck = pool;
   flashIdx = 0;
@@ -2305,18 +2391,8 @@ let quizCount = 0;
 let quizAnswered = false;
 let quizCurrent = null;
 
-function buildQuizChips() {
-  const wrap = $("#quizChips");
-  wrap.innerHTML = "";
-  ["All", ...CATEGORIES].forEach(cat => {
-    const c = document.createElement("button");
-    c.className = "chip" + (cat===quizCat ? " active" : "");
-    c.textContent = cat;
-    c.onclick = () => { quizCat = cat; buildQuizChips(); nextQuestion(); };
-    wrap.appendChild(c);
-  });
-}
-function quizPool() { return quizCat==="All" ? VOCAB : VOCAB.filter(v=>v.cat===quizCat); }
+function buildQuizChips() { buildPicker("quiz"); }
+function quizPool() { return vocabPool(quizCat); }
 
 function nextQuestion() {
   quizAnswered = false;
