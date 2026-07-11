@@ -2159,6 +2159,8 @@ function renderHub(){
   });
 }
 function showView(id){
+  // a sync landed while he was mid-drill and we deferred the rebuild — now is the safe moment
+  if (syncStale) { syncStale = false; rebuildDrills(); }
   const isDrill = DRILL_IDS.includes(id);
   document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
   const sec = $("#" + id);
@@ -2333,7 +2335,19 @@ $("#fcRevealTr").addEventListener("click", e => {
   tr.style.display = hidden ? "block" : "none";
   e.currentTarget.textContent = hidden ? "Hide translation" : "Show English translation";
 });
+/* Every other drill guards against a second answer landing on the same question (quizAnswered,
+   mAnswered, c8Answered). Flashcards had none, so two events in the same instant would bank two
+   cards and consume two of them.
+   The window is deliberately TINY. A duplicate/ghost event arrives within milliseconds; a human
+   double-tap is >150ms apart. An earlier 300ms version swallowed a legitimate second grade in
+   testing — someone blasting through known words taps ~4/sec, and dropping a real answer to
+   defend against a hypothetical one is a bad trade. 100ms blocks duplicates and nothing else. */
+let fcLastGrade = 0;
 function gradeCard(known) {
+  if (!flashDeck.length) return;
+  const now = Date.now();
+  if (now - fcLastGrade < 100) return;
+  fcLastGrade = now;
   const v = flashDeck[flashIdx % flashDeck.length];
   const existing = state.cards[v.es];
   // snapshot the card's state *before* grading so Previous can restore it exactly
@@ -4388,12 +4402,37 @@ async function syncNow(manual) {
     syncing = false;
   }
 }
+/* A sync must NEVER restart an activity he's in the middle of.
+ *
+ * This shipped broken and he caught it on the phone: tapping a flashcard calls save(), which
+ * schedules a sync 4s later, and the response ran buildDeck() — reshuffling the deck and
+ * resetting the card index, so a card he'd never seen appeared out of nowhere. It looked like
+ * a tap was skipping a card. (On the desktop he clicks through fast enough to keep resetting
+ * the debounce, which is why it only showed up on the phone, where he pauses to read.)
+ *
+ * The flashcard symptom was the mild half. The same rebuild swapped the QUESTION in the Core 8
+ * and verbs drills while an answer was half-typed — so the answer would be graded against a
+ * different question, marked wrong, and a wrong answer DESTROYS a banked rep (creditRep
+ * decrements c and pops a day). Sync would then have pushed that loss to the cloud.
+ *
+ * So: refresh only what's passive, and defer anything that would restart a drill until he
+ * navigates away of his own accord. */
+const BUSY_VIEWS = ["flash", "quiz", "core8", "mastery"];
+let syncStale = false;
+const activeViewId = () => (document.querySelector(".view.active") || {}).id || null;
+const lessonOpen = () => { const m = $("#lessonModal"); return !!m && m.style.display !== "none"; };
+function rebuildDrills() {
+  buildDeck(); nextQuestion(); masteryRefresh(); initCore8();
+}
 function syncRefresh() {
-  // don't yank the rug out from under a lesson in progress
-  if ($("#lessonModal") && $("#lessonModal").style.display !== "none") return;
   removeCustomVocab(); mergeCustomVocab();
-  buildFlashChips(); buildQuizChips(); buildDeck();
-  masteryRefresh(); initCore8();
+  buildFlashChips(); buildQuizChips();          // chips only — these touch neither deck nor question
+  if (lessonOpen() || BUSY_VIEWS.includes(activeViewId())) {
+    syncStale = true;                           // pick it up next time he navigates
+    if (activeViewId() === "flash") showCard(); // refresh the mastery-level label, keep his place
+  } else {
+    rebuildDrills();
+  }
   reconcileDay(); renderHome(); renderProgress();
 }
 if (syncServed()) {
