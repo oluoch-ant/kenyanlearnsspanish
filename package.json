@@ -8,6 +8,6 @@
     "build": "node scripts/build.mjs"
   },
   "dependencies": {
-    "@netlify/blobs": "^8.1.0"
+    "@netlify/blobs": "^10.7.0"
   }
 }
