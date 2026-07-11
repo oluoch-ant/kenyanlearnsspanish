@@ -26,6 +26,11 @@ self.addEventListener("activate", e => {
    works with no connection at all; a background fetch refreshes the cache */
 self.addEventListener("fetch", e => {
   if (e.request.method !== "GET") return;
+  // NEVER cache the sync API. This is not theoretical: a cached authorised GET /api/sync was
+  // being replayed for a later request with the WRONG passphrase, returning 200 with somebody
+  // else's payload, and it also served stale progress on a pull. The API is live data — it must
+  // always go to the network.
+  if (new URL(e.request.url).pathname.startsWith("/api/")) return;
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then(hit => {
       const refresh = fetch(e.request)
