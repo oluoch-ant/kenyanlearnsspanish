@@ -40,7 +40,11 @@ export default async (req) => {
     return json({ error: "unauthorized" }, 401);
   }
 
-  const store = getStore(STORE);
+  // STRONG consistency is not optional here. Blobs defaults to eventual consistency (updates
+  // propagate "within 60 seconds"), which silently breaks read-merge-write: the read comes back
+  // stale, we merge into an out-of-date copy, and the other device's reps are lost. This exact
+  // bug ate the phone's reps in the first live test. Strong reads cost a few ms. Worth it.
+  const store = getStore({ name: STORE, consistency: "strong" });
 
   if (req.method === "GET") {
     const saved = await store.get(KEY, { type: "json" });

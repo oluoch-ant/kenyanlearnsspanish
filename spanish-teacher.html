@@ -2078,6 +2078,7 @@ const defaultState = () => ({
   core8: {},               // inf -> {slots:{slot:{c,days,box,seen}}, use:{check:{c,days,items}}}
   migV: MIG_V,             // migration version (a fresh state is already current)
   migNotice: false,        // one-shot explainer after an upgrade
+  syncEpoch: 0,            // bumped by a reset — a higher epoch replaces the cloud instead of merging
 });
 let state = load();
 function load() {
@@ -4196,8 +4197,15 @@ $("#soundBtn").addEventListener("click", () => {
   save();
 });
 $("#resetBtn").addEventListener("click", () => {
-  if (confirm("Reset all progress? This can't be undone.")) {
-    state = defaultState(); save();
+  const synced = typeof syncServed === "function" && syncServed() && !!localStorage.getItem(SYNC_SECRET_LS);
+  const msg = synced
+    ? "Reset all progress — on this device AND in the cloud, so it won't come back on your other device. This can't be undone."
+    : "Reset all progress? This can't be undone.";
+  if (confirm(msg)) {
+    const epoch = (state.syncEpoch || 0) + 1;   // outrank the cloud copy instead of merging with it
+    state = defaultState();
+    state.syncEpoch = epoch;
+    save();
     quizStreak = 0; quizCount = 0;
     removeCustomVocab();
     if (!["All", ...CATEGORIES].includes(flashCat)) flashCat = "All";

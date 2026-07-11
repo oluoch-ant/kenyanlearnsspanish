@@ -93,6 +93,15 @@ export function mergeState(remote, local) {
   if (!remote) return local;
   if (!local) return remote;
 
+  /* RESET. The merge only ever unions, so it can never delete anything — which means "Reset all
+   * progress" would be undone by the very next sync, with the cloud handing everything straight
+   * back. syncEpoch is the escape hatch: a reset bumps it, and a higher epoch wins outright
+   * instead of merging. Whichever side has the newer epoch replaces the other wholesale. */
+  const re = Number(remote.syncEpoch) || 0;
+  const le = Number(local.syncEpoch) || 0;
+  if (le > re) return local;    // this device reset — wipe the cloud
+  if (re > le) return remote;   // another device reset — wipe this device
+
   // whichever save was written last wins for plain scalars & preferences
   const newer = (local.updatedAt || "") >= (remote.updatedAt || "") ? local : remote;
   const older = newer === local ? remote : local;
@@ -138,6 +147,7 @@ export function mergeState(remote, local) {
     },
 
     // --- housekeeping ---
+    syncEpoch: Math.max(re, le),
     migV: maxN(remote.migV, local.migV),
     migNotice: false,   // device-local, never synced
     gNotice: newer.gNotice ?? null,
