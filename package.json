@@ -1,0 +1,13 @@
+{
+  "name": "kenyanlearnsspanish",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Spanish Teacher — single-file PWA, plus a sync function backed by Netlify Blobs",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}

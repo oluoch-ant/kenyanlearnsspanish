@@ -1,0 +1,10 @@
+node_modules/
+.netlify/
+.DS_Store
+Thumbs.db
+
+# my scratch/test files
+_selftest.html
+_navtest*.html
+_navshot.html
+_demo.html

@@ -1,0 +1,33 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "spanish-teacher",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\oluoc\\AppData\\Local\\Temp\\claude\\C--Users-oluoc-Spanish-Teacher\\a09ec18f-64fd-4fc5-942b-0014ed4405e9\\scratchpad\\serve.ps1"
+      ],
+      "port": 8753,
+      "autoPort": true
+    },
+    {
+      "name": "gym",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "C:\\Users\\oluoc\\AppData\\Local\\Temp\\claude\\C--Users-oluoc-Spanish-Teacher\\3e7b23d9-fd6a-4091-9c0a-4112d5d1b91b\\scratchpad\\serve-gym.ps1",
+        "-Port",
+        "8761"
+      ],
+      "port": 8761,
+      "autoPort": false
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+# Netlify config for kenyanlearnsspanish.
+#
+# The app is authored as ONE file — spanish-teacher.html at the repo root. The build copies
+# it into pwa/ (which is what gets published) and stamps the service-worker cache version
+# with the commit sha, so installed phones always pick up a new build. That removes the two
+# manual steps the old drag-and-drop loop needed: copy the file, remember to bump sw.js.
+
+[build]
+  command = "node scripts/build.mjs"
+  publish = "pwa"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+
+# The app is a single page; nothing else to route. The sync function declares its own
+# path (/api/sync) in netlify/functions/sync.mjs.
