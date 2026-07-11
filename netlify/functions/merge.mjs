@@ -77,6 +77,15 @@ function mergeCore8(a, b) {
   return out;
 }
 
+/* numbers: band -> { read: rec, listen: rec }. Same nested shape as core8's slots, and it MUST
+   be merged explicitly — otherwise it falls through to the plain scalar spread and becomes
+   last-write-wins, quietly throwing away reps done on the other device. */
+function mergeNumbers(a, b) {
+  const out = {};
+  for (const band of keysOf(a, b)) out[band] = mergeMap((a || {})[band], (b || {})[band]);
+  return out;
+}
+
 function mergeVocab(a = [], b = []) {
   const byEs = new Map();
   for (const w of [...(a || []), ...(b || [])]) if (w && w.es) byEs.set(w.es, w);
@@ -124,6 +133,7 @@ export function mergeState(remote, local) {
     verbs: mergeMap(remote.verbs, local.verbs),
     past: mergeMap(remote.past, local.past),
     core8: mergeCore8(remote.core8, local.core8),
+    numbers: mergeNumbers(remote.numbers, local.numbers),
     customVocab: mergeVocab(remote.customVocab, local.customVocab),
 
     // --- gamification ---

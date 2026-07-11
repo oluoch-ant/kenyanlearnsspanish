@@ -65,6 +65,13 @@
   .chip:disabled { opacity: .4; cursor: default; }
   .chip:disabled:hover { color: var(--muted); border-color: var(--border); }
 
+  /* --- Numbers --- */
+  .num-display { font-size: 3.2rem; font-weight: 700; letter-spacing: -.03em; text-align: center; margin: 6px 0 4px; }
+  .num-display.small { font-size: 2.4rem; }
+  .num-listen { display: block; margin: 4px auto 14px; font-size: 2rem; background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; width: 76px; height: 76px; cursor: pointer; }
+  .num-listen:hover { border-color: var(--accent); }
+  .num-hint { text-align: center; font-size: .82rem; color: var(--muted); margin: 0 0 12px; }
+
   /* --- Practice hub --- */
   .hub { display: grid; grid-template-columns: repeat(auto-fit, minmax(228px, 1fr)); gap: 12px; }
   .hub-card {
@@ -396,6 +403,29 @@
   <section id="home" class="view active">
     <div id="homeRoot"></div>
     <p class="counter" style="margin-top:16px;font-size:.82rem;opacity:.8">Lessons draw from your real flashcards &amp; verbs and update the same mastery data · a day is banked by finishing any lesson</p>
+  </section>
+
+  <!-- NUMBERS -->
+  <section id="numbers" class="view">
+    <div class="panel" style="margin-bottom:14px">
+      <p class="q-prompt" style="margin:0 0 12px;text-align:left">Numbers are the thing that stops working the moment someone says a price at you. Every question here is generated, so you'll never see the same one twice — and you practise both directions, because <b>hearing</b> a number is where it actually falls apart.</p>
+      <div id="numStrength" class="c8-strength"></div>
+    </div>
+    <div class="chips" id="numModeChips"></div>
+    <div class="chips" id="numBandChips"></div>
+    <div class="panel" id="numOverviewPanel">
+      <table class="conj-table" id="numTable"></table>
+      <p class="counter" style="margin-top:14px;font-size:.8rem;opacity:.8">Same rule as everywhere else: 3 clean answers, on 3 different days, fast enough to be automatic.</p>
+    </div>
+    <div class="panel" id="numDrillPanel" style="display:none">
+      <div class="scorebar"><span id="numInfo"></span><span class="streak" id="numStreak"></span></div>
+      <p class="q-prompt" id="numPrompt"></p>
+      <div id="numQuestion"></div>
+      <input class="fill-input" id="numInput" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button class="big primary" id="numCheck">Check</button>
+      <div class="feedback" id="numFb"></div>
+      <button class="big primary" id="numNext" style="display:none">Next →</button>
+    </div>
   </section>
 
   <!-- CORE 8 — the verbs that are really grammar -->
@@ -2089,6 +2119,7 @@ const defaultState = () => ({
   records: { bestDayXP: 0, bestWeekXP: 0 },
   // --- usage-based mastery ---
   core8: {},               // inf -> {slots:{slot:{c,days,box,seen}}, use:{check:{c,days,items}}}
+  numbers: {},             // band -> {read:{c,days,...}, listen:{...}} — mastery per band, not per item
   migV: MIG_V,             // migration version (a fresh state is already current)
   migNotice: false,        // one-shot explainer after an upgrade
   syncEpoch: 0,            // bumped by a reset — a higher epoch replaces the cloud instead of merging
@@ -2130,6 +2161,8 @@ const DRILLS = [
     meta: () => `${VOCAB.filter(v => isDue(state.cards[v.es]) && state.cards[v.es]).length} due for review` },
   { id:"quiz",    icon:"✍️", name:"Quiz",        blurb:"Multiple choice and type-it-out, by category.",
     meta: () => state.quizTotal ? `${Math.round(100*state.quizCorrect/state.quizTotal)}% accuracy` : "Not started yet" },
+  { id:"numbers", icon:"🔢", name:"Numbers",     blurb:"Say it, hear it, write it — cardinals, prices and telling the time.",
+    meta: () => `${numBandsMastered()}/${NUM_BANDS.length} bands mastered` },
   { id:"conj",    icon:"🔀", name:"Conjugation", blurb:"Full tables — present, preterite, imperfect, future, conditional.",
     meta: () => `${VERBS.length} verbs · 5 tenses` },
   { id:"mastery", icon:"🎯", name:"Verbs",       blurb:"The other 188, in batches of ten, in priority order.",
@@ -2178,6 +2211,7 @@ function showView(id){
   if (id === "home") renderHome();
   if (id === "tutor") renderTutor();
   if (id === "core8") { buildC8Chips(); showC8Panel(); }
+  if (id === "numbers") initNumbers();
   if (id === "mastery") { buildMBatchSelect(); if (mMode === "learn") renderMLearn(); }
   if (id === "flash") { buildFlashChips(); showCard(); }   // refresh the "Due" count on entry
   if (id === "quiz") buildQuizChips();
@@ -4082,6 +4116,235 @@ function renderMigNotice(){
   $("#migOk").addEventListener("click", () => { state.migNotice = false; save(); box.remove(); });
 }
 
+/* ============================ NUMBERS ============================
+ * Unlike the verbs, this content is COMPUTABLE — one number-to-words function gives infinite
+ * questions, so there's nothing to hand-author and he never sees the same item twice.
+ * That breaks the usual mastery model though: you can't track reps per item when every item is
+ * new. So mastery is tracked per BAND (0–15, 16–29, 30–99, 100–999, prices, time) × direction
+ * (read it / hear it). Same rule as everywhere: 3 clean answers, 3 distinct days, under time. */
+const N_UNITS = ["cero","uno","dos","tres","cuatro","cinco","seis","siete","ocho","nueve","diez",
+  "once","doce","trece","catorce","quince","dieciséis","diecisiete","dieciocho","diecinueve","veinte",
+  "veintiuno","veintidós","veintitrés","veinticuatro","veinticinco","veintiséis","veintisiete","veintiocho","veintinueve"];
+const N_TENS = { 30:"treinta", 40:"cuarenta", 50:"cincuenta", 60:"sesenta", 70:"setenta", 80:"ochenta", 90:"noventa" };
+// the irregular hundreds are the whole point of the 100–999 band: quinientos, setecientos, novecientos
+const N_HUND = { 1:"ciento", 2:"doscientos", 3:"trescientos", 4:"cuatrocientos", 5:"quinientos",
+                 6:"seiscientos", 7:"setecientos", 8:"ochocientos", 9:"novecientos" };
+function numToWords(n) {
+  if (n === 1000) return "mil";
+  if (n <= 29) return N_UNITS[n];
+  if (n < 100) { const t = Math.floor(n/10)*10, u = n % 10; return u ? `${N_TENS[t]} y ${N_UNITS[u]}` : N_TENS[t]; }
+  if (n === 100) return "cien";                       // exactly 100 is "cien", 101+ is "ciento…"
+  const h = Math.floor(n/100), rest = n % 100;
+  return rest ? `${N_HUND[h]} ${numToWords(rest)}` : N_HUND[h];
+}
+// before a masculine noun, "uno" drops to "un": un euro, veintiún euros, treinta y un euros
+const numToWordsMasc = n => numToWords(n).replace(/veintiuno$/, "veintiún").replace(/\buno$/, "un");
+
+function priceWords(e, c) {
+  const eu = `${numToWordsMasc(e)} ${e === 1 ? "euro" : "euros"}`;
+  return c === 0 ? eu : `${eu} con ${numToWords(c)}`;
+}
+function timeWords(h, m) {
+  const lead = hh => hh === 1 ? "es la una" : `son las ${numToWords(hh)}`;
+  if (m === 0)  return `${lead(h)} en punto`;
+  if (m === 15) return `${lead(h)} y cuarto`;
+  if (m === 30) return `${lead(h)} y media`;
+  if (m < 30)   return `${lead(h)} y ${numToWords(m)}`;
+  const nh = h === 12 ? 1 : h + 1, rem = 60 - m;      // past the half hour, Spanish counts BACK
+  return rem === 15 ? `${lead(nh)} menos cuarto` : `${lead(nh)} menos ${numToWords(rem)}`;
+}
+const timeDigital = (h, m) => `${h}:${String(m).padStart(2, "0")}`;
+
+const NUM_BANDS = [
+  { id:"b1", label:"0–15",      hint:"no logic, just learn them" },
+  { id:"b2", label:"16–29",     hint:"one word: dieciséis, veintiuno" },
+  { id:"b3", label:"30–99",     hint:"now they take «y»: treinta y uno" },
+  { id:"b4", label:"100–999",   hint:"cien vs ciento · quinientos · setecientos · novecientos" },
+  { id:"pr", label:"💶 Prices", hint:"catorce euros con cincuenta" },
+  { id:"tm", label:"🕐 Time",   hint:"y cuarto · y media · menos cuarto" },
+];
+const NUM_DIRS = { read: "See it → say it", listen: "Hear it → write it" };
+const NUM_FLUENCY = { read: 12, listen: 9 };   // typing "novecientos noventa y nueve" takes longer than "999"
+const randInt = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+
+/* build one question. `read` shows the digits and wants the Spanish; `listen` speaks the Spanish
+   and wants the digits — that second one is the direction that actually fails you in a shop. */
+function numGen(bandId, dir) {
+  let display, spanish, digits, accepted;
+  if (bandId === "pr") {
+    const e = randInt(1, 999), c = Math.random() < 0.25 ? 0 : randInt(1, 19) * 5;
+    display = `${e},${String(c).padStart(2, "0")} €`;
+    spanish = priceWords(e, c);
+    digits  = `${e},${String(c).padStart(2, "0")}`;
+    accepted = dir === "read"
+      ? [spanish, spanish.replace(" con ", " y "), spanish.replace(" con ", " "),
+         spanish + " céntimos", spanish.replace(/ euros?/, ""),
+         priceWords(e, c).replace(numToWordsMasc(e), numToWords(e))]   // forgive "uno euro"
+      : [digits, digits.replace(",", "."), c === 0 ? String(e) : null];
+  } else if (bandId === "tm") {
+    const h = randInt(1, 12), m = [0,5,10,15,20,25,30,35,40,45,50,55][randInt(0, 11)];
+    display = timeDigital(h, m);
+    spanish = timeWords(h, m);
+    digits  = display;
+    if (dir === "read") {
+      const relative = spanish;
+      const lead = h === 1 ? "es la una" : `son las ${numToWords(h)}`;
+      const digital = m === 0 ? lead : `${lead} ${numToWords(m)}`;   // "son las tres cuarenta y cinco"
+      accepted = [];
+      [relative, digital].forEach(s => {
+        accepted.push(s);
+        accepted.push(s.replace(/^son las |^es la /, ""));           // without the lead-in
+        accepted.push(s.replace(/^son /, "").replace(/^es /, ""));   // "las cuatro menos cuarto"
+        accepted.push(s.replace(/ en punto$/, ""));
+      });
+    } else {
+      const h24 = h + 12;
+      accepted = [digits, `${h24}:${String(m).padStart(2,"0")}`, display.replace(":", ".")];
+    }
+  } else {
+    const range = { b1:[0,15], b2:[16,29], b3:[30,99], b4:[100,999] }[bandId];
+    const n = randInt(range[0], range[1]);
+    display = String(n);
+    spanish = numToWords(n);
+    digits  = String(n);
+    accepted = dir === "read" ? [spanish, numToWordsMasc(n)] : [digits];
+  }
+  return { bandId, dir, display, spanish, digits, accepted: accepted.filter(Boolean),
+           answer: dir === "read" ? spanish : digits };
+}
+
+/* --- per-band mastery, reusing the same engine as everything else --- */
+function numRec(bandId, dir) {
+  state.numbers = state.numbers || {};
+  const b = state.numbers[bandId] || (state.numbers[bandId] = {});
+  return b[dir] || (b[dir] = { c:0, days:[], box:1, seen:0 });
+}
+const numMet = (bandId, dir) => { const r = numRec(bandId, dir); return r.c >= DAY_REPS && r.days.length >= DAY_REPS; };
+const numBandMastered = b => numMet(b, "read") && numMet(b, "listen");
+const numBandsMastered = () => NUM_BANDS.filter(b => numBandMastered(b.id)).length;
+const numReqsMet = () => NUM_BANDS.reduce((n, b) => n + (numMet(b.id,"read")?1:0) + (numMet(b.id,"listen")?1:0), 0);
+const NUM_REQS_TOTAL = NUM_BANDS.length * 2;
+
+const NUM_MODES = [["mixed","🔀 Mixed"],["read","🔢 See it"],["listen","👂 Hear it"],["overview","📊 Overview"]];
+let numMode = "mixed", numBand = "All", numCur = null, numAnswered = false, numT0 = 0, numStreak = 0;
+const numScope = () => numBand === "All" ? NUM_BANDS.map(b => b.id) : [numBand];
+
+function renderNumStrength() {
+  $("#numStrength").innerHTML =
+    `<div><b>${numReqsMet()}<span style="font-size:.9rem;color:var(--muted)">/${NUM_REQS_TOTAL}</span></b><span>Number strength</span></div>
+     <div><b>${numBandsMastered()}<span style="font-size:.9rem;color:var(--muted)">/${NUM_BANDS.length}</span></b><span>Bands mastered</span></div>
+     <div><b>🔥 ${numStreak}</b><span>Answer streak</span></div>`;
+}
+function buildNumChips() {
+  const mc = $("#numModeChips"); mc.innerHTML = "";
+  NUM_MODES.forEach(([k, label]) => {
+    const b = document.createElement("button");
+    b.className = "chip" + (numMode === k ? " active" : "");
+    b.textContent = label;
+    b.onclick = () => { numMode = k; buildNumChips(); showNumPanel(); };
+    mc.appendChild(b);
+  });
+  const bc = $("#numBandChips"); bc.innerHTML = "";
+  bc.style.display = numMode === "overview" ? "none" : "flex";
+  ["All", ...NUM_BANDS.map(b => b.id)].forEach(id => {
+    const band = NUM_BANDS.find(b => b.id === id);
+    const b = document.createElement("button");
+    b.className = "chip" + (numBand === id ? " active" : "");
+    b.textContent = id === "All" ? "All bands" : band.label + (numBandMastered(id) ? " ✓" : "");
+    b.onclick = () => { numBand = id; buildNumChips(); showNumPanel(); };
+    bc.appendChild(b);
+  });
+}
+function renderNumOverview() {
+  const t = $("#numTable"); t.innerHTML = "";
+  NUM_BANDS.forEach(b => {
+    const pip = met => met ? "●●●" : `<span class="off">○○○</span>`;
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="pron-cell">${b.label}${numBandMastered(b.id) ? " ✓" : ""}</td>
+      <td>${b.hint}<br><span class="c8-sub">See it <span class="pips">${pip(numMet(b.id,"read"))}</span> &nbsp;·&nbsp; Hear it <span class="pips">${pip(numMet(b.id,"listen"))}</span></span></td>
+      <td style="text-align:right;white-space:nowrap"><b>${(numMet(b.id,"read")?1:0)+(numMet(b.id,"listen")?1:0)}/2</b></td>`;
+    t.appendChild(tr);
+  });
+}
+function newNumQ() {
+  numAnswered = false;
+  const scope = numScope();
+  const dirs = numMode === "read" ? ["read"] : numMode === "listen" ? ["listen"] : ["read","listen"];
+  const all = [];
+  scope.forEach(b => dirs.forEach(d => all.push({ b, d })));
+  const open = all.filter(x => !numMet(x.b, x.d));
+  const pool = open.length ? open : all;
+  let pick = pool[Math.floor(Math.random() * pool.length)];
+  if (pool.length > 1 && numCur && pick.b === numCur.bandId && pick.d === numCur.dir)
+    pick = pool.find(x => !(x.b === numCur.bandId && x.d === numCur.dir)) || pick;
+
+  numCur = numGen(pick.b, pick.d);
+  const band = NUM_BANDS.find(b => b.id === numCur.bandId);
+  const rec = numRec(numCur.bandId, numCur.dir);
+  $("#numInfo").textContent = `${band.label} · ${NUM_DIRS[numCur.dir]} · ${Math.min(DAY_REPS, rec.c)}/${DAY_REPS}`;
+  $("#numStreak").textContent = `🔥 ${numStreak} streak`;
+  const q = $("#numQuestion");
+  const inp = $("#numInput");
+  if (numCur.dir === "read") {
+    $("#numPrompt").textContent = numCur.bandId === "tm" ? "What time is it? Say it in Spanish:"
+      : numCur.bandId === "pr" ? "Say this price in Spanish:" : "Write this number in Spanish:";
+    q.innerHTML = `<p class="num-display${numCur.display.length > 6 ? " small" : ""}">${numCur.display}</p>
+                   <p class="num-hint">${band.hint}</p>`;
+    inp.placeholder = "Type it in Spanish…";
+  } else {
+    $("#numPrompt").textContent = numCur.bandId === "tm" ? "What time did you hear? Write the digits:"
+      : numCur.bandId === "pr" ? "What price did you hear? Write the digits:" : "What number did you hear?";
+    q.innerHTML = `<button class="num-listen" id="numReplay" type="button" aria-label="Play again">🔊</button>
+                   <p class="num-hint">Tap to hear it again</p>`;
+    $("#numReplay").addEventListener("click", () => speak(numCur.spanish));
+    inp.placeholder = numCur.bandId === "tm" ? "e.g. 3:45" : numCur.bandId === "pr" ? "e.g. 14,50" : "Digits…";
+    setTimeout(() => speak(numCur.spanish), 250);
+  }
+  inp.value = ""; inp.readOnly = false; inp.className = "fill-input"; inp.focus();
+  $("#numFb").textContent = ""; $("#numFb").className = "feedback";
+  $("#numNext").style.display = "none";
+  numT0 = Date.now();
+}
+function checkNum() {
+  if (numAnswered) return;
+  const inp = $("#numInput");
+  if (!inp.value.trim()) return;
+  const ok = numCur.accepted.some(a => norm(String(a)) === norm(inp.value));
+  const secs = (Date.now() - numT0) / 1000;
+  numAnswered = true; inp.readOnly = true;
+  inp.classList.add(ok ? "correct" : "wrong");
+  const rec = numRec(numCur.bandId, numCur.dir);
+  const res = creditRep(rec, ok, secs, NUM_FLUENCY[numCur.dir], null);
+  save();
+  numStreak = ok ? numStreak + 1 : 0;
+  $("#numStreak").textContent = `🔥 ${numStreak} streak`;
+  const fb = $("#numFb");
+  fb.className = "feedback " + (ok ? "ok" : "no");
+  let msg;
+  if (!ok) msg = `Not quite — <span class="answer"><b>${numCur.answer}</b></span>`;
+  else if (res.reason === "slow") msg = `¡Correcto! ✓ — but ${secs.toFixed(1)}s. Under ${NUM_FLUENCY[numCur.dir]}s to bank a rep.`;
+  else if (res.reason === "sameday") msg = `¡Correcto! ✓ — already banked today. Come back tomorrow for rep ${rec.c + 1}.`;
+  else if (numMet(numCur.bandId, numCur.dir)) msg = `¡Correcto! ✓ — <b>${NUM_BANDS.find(b=>b.id===numCur.bandId).label} · ${NUM_DIRS[numCur.dir]}</b> mastered ●●●`;
+  else msg = `¡Correcto! ✓ — ${rec.c}/${DAY_REPS} reps, on ${rec.days.length}/${DAY_REPS} days`;
+  // always show the other side of the pair — that's the teaching moment
+  fb.innerHTML = msg + `<div class="c8-why"><b>${numCur.display}</b> = ${numCur.spanish}</div>`;
+  if (state.sound !== false && numCur.dir === "read") speak(numCur.spanish);
+  renderNumStrength(); buildNumChips();
+  $("#numNext").style.display = "block";
+}
+function showNumPanel() {
+  $("#numOverviewPanel").style.display = numMode === "overview" ? "block" : "none";
+  $("#numDrillPanel").style.display    = numMode === "overview" ? "none"  : "block";
+  if (numMode === "overview") renderNumOverview(); else newNumQ();
+  renderNumStrength();
+}
+$("#numCheck").addEventListener("click", checkNum);
+$("#numNext").addEventListener("click", newNumQ);
+$("#numInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); if (numAnswered) newNumQ(); else checkNum(); }
+});
+function initNumbers() { buildNumChips(); showNumPanel(); }
+
 /* ============================ CORE 8 TAB ============================ */
 const C8_MODES = [["overview","📊 Overview"],["forms","📐 Forms"],["usage","🎯 Usage"]];
 let c8Mode = "overview", c8Verb = "All", c8Cur = null, c8Answered = false, c8T0 = 0;
@@ -4417,12 +4680,12 @@ async function syncNow(manual) {
  *
  * So: refresh only what's passive, and defer anything that would restart a drill until he
  * navigates away of his own accord. */
-const BUSY_VIEWS = ["flash", "quiz", "core8", "mastery"];
+const BUSY_VIEWS = ["flash", "quiz", "core8", "mastery", "numbers"];
 let syncStale = false;
 const activeViewId = () => (document.querySelector(".view.active") || {}).id || null;
 const lessonOpen = () => { const m = $("#lessonModal"); return !!m && m.style.display !== "none"; };
 function rebuildDrills() {
-  buildDeck(); nextQuestion(); masteryRefresh(); initCore8();
+  buildDeck(); nextQuestion(); masteryRefresh(); initCore8(); initNumbers();
 }
 function syncRefresh() {
   removeCustomVocab(); mergeCustomVocab();
@@ -4463,6 +4726,7 @@ buildQuizChips(); nextQuestion();
 buildConjControls(); buildConjTable();
 initMastery();
 initCore8();
+initNumbers();
 initTutor();
 $("#soundBtn").textContent = state.sound === false ? "🔇 Sound: Off" : "🔊 Sound: On";
 reconcileDay(); renderHome();
